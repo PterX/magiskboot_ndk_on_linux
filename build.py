@@ -114,6 +114,14 @@ def cmd_out(cmd):
         .decode("utf-8")
     )
 
+def sed_i(originStr, targetStr, file):
+    with open(file, "r", encoding="utf-8") as i, open(f"{file}_tmp", "w", encoding="utf-8") as o:
+        for line in i.readlines():
+            if originStr in line:
+                str(line).replace(originStr, targetStr)
+            o.write(line)
+    mv(f"{file}_tmp", input)
+
 
 LOCALDIR = op.realpath(".")
 cpu_count = multiprocessing.cpu_count()
@@ -405,12 +413,8 @@ def update_code():
     )
 
     # Fix path defined
-    system(
-        r"sed -i 's|../../../tools/keys/|../../tools/keys/|g' Magisk/native/src/boot/sign.rs"
-    )
-    system(
-        r"sed -i 's|../../out/generated/flags.rs|../out/generated/flags.rs|g' Magisk/src/include/consts.rs"
-    )
+    sed_i('../../../tools/keys/', '../../tools/keys/', 'Magisk/native/src/boot/sign.rs')
+    sed_i('../../out/generated/flags.rs', '../out/generated/flags.rs', 'Magisk/src/include/consts.rs')
 
     mv("Magisk/native/src", "src")
     mv("Magisk/tools", "tools")
