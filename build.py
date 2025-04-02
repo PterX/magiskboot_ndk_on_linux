@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import argparse
-from datetime import time
 import errno
 import glob
 import lzma
 import multiprocessing
 import os
 from pathlib import Path
-import platform
 import sys
 import os.path as op
 import shutil
@@ -244,7 +242,7 @@ def build_rust_src(targets: set):
 
 
 def clean_elf():
-    cargo_toml = Path(LOCALDIR,"tools", "elf-cleaner", "Cargo.toml")
+    cargo_toml = Path(LOCALDIR, "tools", "elf-cleaner", "Cargo.toml")
     cmds = ["run", "--release", "--manifest-path", cargo_toml]
     cmds.append("--verbose")
     cmds.append("--")
@@ -353,6 +351,7 @@ def run_ndk_build(cmds: list):
     cmds.append("NDK_PROJECT_PATH=.")
     cmds.append("NDK_APPLICATION_MK=src/Application.mk")
     cmds.append(f"APP_ABI={' '.join(build_abis.keys())}")
+    cmds.append(f"-j{cpu_count}")
     cmds.append("V=1")
     if not release:
         cmds.append("MAGISK_DEBUG=1")
@@ -407,7 +406,10 @@ def update_code():
 
     # Fix path defined
     system(
-        r"sed -i 's|\.\./\.\./\.\./tools/keys/|\.\./\.\./tools/keys/|g' Magisk/native/src/boot/sign.rs"
+        r"sed -i 's|../../../tools/keys/|../../tools/keys/|g' Magisk/native/src/boot/sign.rs"
+    )
+    system(
+        r"sed -i 's|../../out/generated/flags.rs|../out/generated/flags.rs|g' Magisk/src/include/consts.rs"
     )
 
     mv("Magisk/native/src", "src")
@@ -430,9 +432,7 @@ if __name__ == "__main__":
         error("Windws is not support")
 
     if args.build_binary:
-        print(LOCALDIR)
         if not op.exists(ndk_root):
-            print("no!!!!!!!!!!!!!!")
             setup_ndk()
         build_native()
 
