@@ -430,9 +430,10 @@ if __name__ == "__main__":
         error("Windws is not support")
 
     if args.build_binary:
+        print(LOCALDIR)
         if not op.exists(ndk_root):
+            print("no!!!!!!!!!!!!!!")
             setup_ndk()
-           # time.sleep(3)
         build_native()
 
     if args.update_code:
