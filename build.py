@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+from datetime import time
 import errno
+import glob
 import lzma
 import multiprocessing
 import os
@@ -133,9 +135,9 @@ support_abis = {
 is_windows = os.name == "nt"
 EXE_EXT = ".exe" if is_windows else ""
 
-default_targets = {"magiskboot"}
-rust_targets = {"magiskboot"}
-support_targets = default_targets
+default_targets = {"magisk", "magiskboot", "magiskpolicy"}
+support_targets = default_targets | {"resetprop"}
+rust_targets = {"magisk", "magiskboot", "magiskpolicy"}
 
 # Common paths
 ndk_root = Path(LOCALDIR, "ndk")
@@ -152,24 +154,6 @@ config = load_config()
 archs = {"armeabi-v7a", "x86", "arm64-v8a", "x86_64"}
 triples = map(support_abis.get, archs)
 build_abis = dict(zip(archs, triples))
-
-
-def cp_output(source, target):
-    system(f"cp -af {source} {target}")
-
-
-def xz(data):
-    return lzma.compress(data, preset=9, check=lzma.CHECK_NONE)
-
-
-def binary_dump(src, var_name, compressor=xz):
-    out_str = f"constexpr unsigned char {var_name}[] = {{"
-    for i, c in enumerate(compressor(src.read())):
-        if i % 16 == 0:
-            out_str += "\n"
-        out_str += f"0x{c:02X},"
-    out_str += "\n};\n"
-    return out_str
 
 
 def write_if_diff(file_name, text):
@@ -202,6 +186,10 @@ def dump_flag_header():
     mkdir_p(native_gen_path)
     write_if_diff(op.join(native_gen_path, "flags.h"), flag_txt)
 
+    rust_flag_txt = f'pub const MAGISK_VERSION: &str = "{config["version"]}";\n'
+    rust_flag_txt += f'pub const MAGISK_VER_CODE: i32 = {config["versionCode"]};\n'
+    write_if_diff(native_gen_path / "flags.rs", rust_flag_txt)
+
 
 def build_native():
     targets = support_targets
@@ -217,18 +205,6 @@ def build_native():
     build_rust_src(targets)
     build_cpp_src(targets)
 
-
-def run_cargo(cmds, triple="aarch64-linux-android"):
-    llvm_bin = op.join(
-        ndk_root, "toolchains", "llvm", "prebuilt", f"{os_name}-x86_64", "bin"
-    )
-    env = os.environ.copy()
-    env["PATH"] = f'{rust_bin}{os.pathsep}{env["PATH"]}'
-    env["CARGO_BUILD_RUSTC"] = op.join(rust_bin, "rustc" + EXE_EXT)
-    env["RUSTFLAGS"] = "-Clinker-plugin-lto"
-    env["TARGET_CC"] = op.join(llvm_bin, "clang" + EXE_EXT)
-    env["TARGET_CFLAGS"] = f"--target={triple}23"
-    return execv([cargo, *cmds], env)
 
 def build_rust_src(targets: set):
     targets = targets.copy()
@@ -267,6 +243,18 @@ def build_rust_src(targets: set):
             mv(source, target)
 
 
+def clean_elf():
+    cargo_toml = Path(LOCALDIR,"tools", "elf-cleaner", "Cargo.toml")
+    cmds = ["run", "--release", "--manifest-path", cargo_toml]
+    cmds.append("--verbose")
+    cmds.append("--")
+    if "magisk" in default_targets:
+        cmds.extend(glob.glob("out/*/magisk"))
+    if "magiskpolicy" in default_targets:
+        cmds.extend(glob.glob("out/*/magiskpolicy"))
+    run_cargo(cmds)
+
+
 def build_cpp_src(targets: set):
     dump_flag_header()
 
@@ -303,7 +291,7 @@ def build_cpp_src(targets: set):
         run_ndk_build(cmds)
 
     if clean:
-        pass
+        clean_elf()
 
 
 def run_cargo_build():
@@ -349,7 +337,7 @@ def setup_ndk():
     ndk_archive = url.split("/")[-1]
     ondk_path = Path(LOCALDIR, f"ondk-{ndk_ver}")
 
-    if not os.path.isfile(ndk_archive):
+    if not op.isfile(ndk_archive):
         print(f"Downloading {ndk_archive}")
         wget.download(url, ndk_archive)
     print(f"Extracting {ndk_archive}")
@@ -365,7 +353,7 @@ def run_ndk_build(cmds: list):
     cmds.append("NDK_PROJECT_PATH=.")
     cmds.append("NDK_APPLICATION_MK=src/Application.mk")
     cmds.append(f"APP_ABI={' '.join(build_abis.keys())}")
-    cmds.append(f"-j{cpu_count}")
+    cmds.append("V=1")
     if not release:
         cmds.append("MAGISK_DEBUG=1")
     proc = execv([ndk_build, *cmds])
@@ -385,48 +373,9 @@ def move_gen_bins():
 
     rm_rf(rust_out)
     rm_rf(native_gen_path)
-    
+
     with open(Path(native_out, "magisk_version.txt"), "w") as f:
         f.write(f"magisk.versionCode={config['versionCode']}\n")
-    
-
-def build_cpp_src(targets: set):
-    dump_flag_header()
-
-    cmds = []
-    clean = False
-
-    if "magisk" in targets:
-        cmds.append("B_MAGISK=1")
-        clean = True
-
-    if "magiskpolicy" in targets:
-        cmds.append("B_POLICY=1")
-        clean = True
-
-    if "magiskinit" in targets:
-        cmds.append("B_PRELOAD=1")
-
-    if "resetprop" in targets:
-        cmds.append("B_PROP=1")
-
-    if cmds:
-        run_ndk_build(cmds)
-
-    cmds.clear()
-
-    if "magiskinit" in targets:
-        cmds.append("B_INIT=1")
-
-    if "magiskboot" in targets:
-        cmds.append("B_BOOT=1")
-
-    if cmds:
-        cmds.append("B_CRT0=1")
-        run_ndk_build(cmds)
-
-    if clean:
-        pass
 
 
 def run_cargo(cmds):
@@ -441,6 +390,7 @@ def update_code():
     os.chdir(LOCALDIR)
     rm_rf("Magisk")
     rm_rf("src")
+    rm_rf("tools")
     if (
         system(
             "git clone --recurse-submodules https://github.com/topjohnwu/Magisk.git Magisk"
@@ -461,6 +411,7 @@ def update_code():
     )
 
     mv("Magisk/native/src", "src")
+    mv("Magisk/tools", "tools")
     rm_rf("Magisk")
 
 
@@ -481,6 +432,7 @@ if __name__ == "__main__":
     if args.build_binary:
         if not op.exists(ndk_root):
             setup_ndk()
+            time.sleep(3)
         build_native()
 
     if args.update_code:
