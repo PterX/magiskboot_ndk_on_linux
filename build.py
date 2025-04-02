@@ -432,7 +432,7 @@ if __name__ == "__main__":
     if args.build_binary:
         if not op.exists(ndk_root):
             setup_ndk()
-            time.sleep(3)
+           # time.sleep(3)
        # build_native()
 
     if args.update_code:
